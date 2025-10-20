@@ -1,0 +1,159 @@
+# Disaster Response Agent - Hackathon Demo Script
+
+## Introduction (0:00 - 0:30)
+"Hello everyone! Welcome to our Disaster Response Agent project. This is a functional disaster response system that allows real-time reporting and monitoring of disaster incidents. Today I'll demonstrate how this system works from setup to full operation."
+
+## Project Overview (0:30 - 1:00)
+"Our system consists of:
+- A FastAPI backend with RESTful APIs
+- SQLite database for data persistence
+- Responsive web frontend for reporting
+- Real-time statistics and alert system
+- File upload capabilities for evidence
+
+The goal is to provide emergency responders with a centralized platform for disaster reporting and monitoring."
+
+## Backend Setup (1:00 - 2:00)
+"Let me show you how to set up the backend. First, we install the required dependencies."
+
+[Show terminal]
+```bash
+cd backend
+pip install -r requirements.txt
+```
+
+"Now let's start the FastAPI server."
+
+[Show terminal]
+```bash
+python app.py
+```
+
+"You can see the server is running on http://127.0.0.1:8000. Let me test the API endpoint."
+
+[Show browser or curl]
+```bash
+curl http://127.0.0.1:8000/
+```
+
+Response: {"message": "Disaster Response Agent API", "status": "running"}
+
+## Frontend Setup (2:00 - 2:30)
+"Now let's set up the frontend. We'll use Python's built-in HTTP server to serve the static files."
+
+[Show terminal]
+```bash
+python -m http.server 3000 --bind 127.0.0.1 --directory frontend
+```
+
+"The frontend is now available at http://127.0.0.1:3000"
+
+## Live Demo - Interface Walkthrough (2:30 - 4:00)
+[Open browser to http://127.0.0.1:3000]
+
+"Here's our disaster response dashboard. You can see:
+- Real-time statistics cards showing total reports and severity breakdowns
+- A form to submit new disaster reports
+- A list of recent reports with severity indicators
+
+Let me demonstrate submitting a report."
+
+[Fill out the form]
+- Title: "Earthquake in Downtown Area"
+- Location: "New York, NY"
+- Severity: "High"
+- Description: "Strong earthquake felt across downtown. Buildings shaking, possible structural damage."
+- Reporter Name: "John Smith"
+
+[Click Submit]
+
+"You can see the report was submitted successfully, and the statistics updated automatically. The system also logged an alert to the console for high-severity reports."
+
+## API Endpoints Demonstration (4:00 - 5:00)
+"Let me show you the API endpoints that power this system."
+
+[Show different API calls]
+
+1. Get all reports:
+```bash
+curl http://127.0.0.1:8000/api/reports
+```
+
+2. Get statistics:
+```bash
+curl http://127.0.0.1:8000/api/stats
+```
+
+3. Get alerts (high-priority only):
+```bash
+curl http://127.0.0.1:8000/api/alerts
+```
+
+## File Upload Feature (5:00 - 5:30)
+"Our system also supports file uploads for evidence. Let me demonstrate."
+
+[Upload an image with a report]
+- Select an image file
+- Submit the report
+
+"The file is safely stored in the uploads directory with a timestamp to prevent conflicts."
+
+## Real-time Features (5:30 - 6:00)
+"The interface automatically refreshes every 30 seconds to show new reports and updated statistics. This ensures emergency responders always have the latest information."
+
+## Technical Architecture (6:00 - 7:00)
+"Let me explain the technical architecture:
+
+- **Backend**: FastAPI provides high-performance async APIs
+- **Database**: SQLite for lightweight, file-based storage
+- **Frontend**: Vanilla JavaScript with responsive CSS
+- **File Storage**: Local file system with organized directory structure
+- **CORS**: Enabled for cross-origin requests
+
+The system is designed to be easily deployable and scalable."
+
+## Future Enhancements (7:00 - 7:30)
+"Future improvements could include:
+- AWS S3 integration for cloud file storage
+- AI-powered triage with AWS Bedrock
+- Real-time WebSocket notifications
+- Mobile app companion
+- Map visualization of incidents
+- SMS/Email alert system"
+
+## Conclusion (7:30 - 8:00)
+"Thank you for watching our Disaster Response Agent demo! This system demonstrates how technology can help coordinate disaster response efforts. The combination of modern web technologies and thoughtful UX design creates a powerful tool for emergency management.
+
+Questions?"
+
+## Quick Commands Reference
+```bash
+# Backend setup
+cd backend
+pip install -r requirements.txt
+python app.py
+
+# Frontend setup
+python -m http.server 3000 --bind 127.0.0.1 --directory frontend
+
+# API endpoints
+curl http://127.0.0.1:8000/                    # Status
+curl http://127.0.0.1:8000/api/reports         # All reports
+curl http://127.0.0.1:8000/api/stats           # Statistics
+curl http://127.0.0.1:8000/api/alerts          # High-priority alerts
+```
+
+## Demo Flow Checklist
+- [ ] Show project structure
+- [ ] Install backend dependencies
+- [ ] Start backend server
+- [ ] Test API endpoint
+- [ ] Start frontend server
+- [ ] Open web interface
+- [ ] Walk through UI components
+- [ ] Submit a sample report
+- [ ] Show auto-refresh
+- [ ] Demonstrate API calls
+- [ ] Show file upload
+- [ ] Explain architecture
+- [ ] Discuss future enhancements

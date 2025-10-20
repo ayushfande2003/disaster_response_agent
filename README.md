@@ -1,0 +1,875 @@
+# Disaster Response Agent - Prototype
+
+A functional disaster response system with backend APIs and a simple frontend interface.
+
+## Project Structure
+
+```
+disaster-response-agent/
+├── backend/
+│   ├── app.py
+│   ├── database.py
+│   ├── models.py
+│   └── requirements.txt
+├── frontend/
+│   └── index.html
+├── data/
+│   ├── uploads/
+│   └── disaster_reports.db
+└── README.md
+```
+
+## Prerequisites
+
+- Python 3.8+
+- pip
+- A modern web browser
+
+## Installation & Setup
+
+### 1. Create Project Structure
+
+```bash
+mkdir -p disaster-response-agent/backend
+mkdir -p disaster-response-agent/frontend
+mkdir -p disaster-response-agent/data/uploads
+cd disaster-response-agent
+```
+
+### 2. Backend Setup
+
+**backend/requirements.txt**
+```
+fastapi==0.104.1
+uvicorn==0.24.0
+python-multipart==0.0.6
+aiofiles==23.2.1
+```
+
+**backend/models.py**
+```python
+from datetime import datetime
+from typing import Optional
+
+class DisasterReport:
+    def __init__(self, id: int, title: str, description: str, 
+                 location: str, severity: str, reporter_name: str,
+                 file_path: Optional[str] = None, 
+                 created_at: Optional[str] = None):
+        self.id = id
+        self.title = title
+        self.description = description
+        self.location = location
+        self.severity = severity
+        self.reporter_name = reporter_name
+        self.file_path = file_path
+        self.created_at = created_at or datetime.now().isoformat()
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+            "location": self.location,
+            "severity": self.severity,
+            "reporter_name": self.reporter_name,
+            "file_path": self.file_path,
+            "created_at": self.created_at
+        }
+```
+
+**backend/database.py**
+```python
+import sqlite3
+import json
+from typing import List, Optional
+from models import DisasterReport
+
+class Database:
+    def __init__(self, db_path: str = "../data/disaster_reports.db"):
+        self.db_path = db_path
+        self.init_db()
+    
+    def init_db(self):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                location TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                reporter_name TEXT NOT NULL,
+                file_path TEXT,
+                created_at TEXT NOT NULL
+            )
+        ''')
+        conn.commit()
+        conn.close()
+    
+    def add_report(self, report: DisasterReport) -> int:
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO reports (title, description, location, severity, 
+                               reporter_name, file_path, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (report.title, report.description, report.location, 
+              report.severity, report.reporter_name, report.file_path, 
+              report.created_at))
+        conn.commit()
+        report_id = cursor.lastrowid
+        conn.close()
+        print(f"[ALERT] New disaster report submitted: {report.title} at {report.location} (Severity: {report.severity})")
+        return report_id
+    
+    def get_all_reports(self) -> List[dict]:
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM reports ORDER BY created_at DESC')
+        rows = cursor.fetchall()
+        conn.close()
+        
+        reports = []
+        for row in rows:
+            reports.append({
+                "id": row[0],
+                "title": row[1],
+                "description": row[2],
+                "location": row[3],
+                "severity": row[4],
+                "reporter_name": row[5],
+                "file_path": row[6],
+                "created_at": row[7]
+            })
+        return reports
+    
+    def get_report_by_id(self, report_id: int) -> Optional[dict]:
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM reports WHERE id = ?', (report_id,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return {
+                "id": row[0],
+                "title": row[1],
+                "description": row[2],
+                "location": row[3],
+                "severity": row[4],
+                "reporter_name": row[5],
+                "file_path": row[6],
+                "created_at": row[7]
+            }
+        return None
+    
+    def get_alerts(self) -> List[dict]:
+        """Get high severity reports as alerts"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT * FROM reports 
+            WHERE severity IN ('Critical', 'High')
+            ORDER BY created_at DESC 
+            LIMIT 10
+        ''')
+        rows = cursor.fetchall()
+        conn.close()
+        
+        alerts = []
+        for row in rows:
+            alerts.append({
+                "id": row[0],
+                "title": row[1],
+                "location": row[3],
+                "severity": row[4],
+                "created_at": row[7]
+            })
+        return alerts
+```
+
+**backend/app.py**
+```python
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+import aiofiles
+import os
+from datetime import datetime
+from database import Database
+from models import DisasterReport
+
+app = FastAPI(title="Disaster Response Agent API")
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Initialize database
+db = Database()
+
+# Create uploads directory if it doesn't exist
+UPLOAD_DIR = "../data/uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+@app.get("/")
+def read_root():
+    return {"message": "Disaster Response Agent API", "status": "running"}
+
+@app.post("/api/reports")
+async def create_report(
+    title: str = Form(...),
+    description: str = Form(...),
+    location: str = Form(...),
+    severity: str = Form(...),
+    reporter_name: str = Form(...),
+    file: UploadFile = File(None)
+):
+    """Submit a new disaster report"""
+    file_path = None
+    
+    # Handle file upload
+    if file and file.filename:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_extension = os.path.splitext(file.filename)[1]
+        safe_filename = f"{timestamp}_{file.filename}"
+        file_path = os.path.join(UPLOAD_DIR, safe_filename)
+        
+        async with aiofiles.open(file_path, 'wb') as f:
+            content = await file.read()
+            await f.write(content)
+        
+        file_path = f"uploads/{safe_filename}"
+    
+    # Create report
+    report = DisasterReport(
+        id=0,
+        title=title,
+        description=description,
+        location=location,
+        severity=severity,
+        reporter_name=reporter_name,
+        file_path=file_path
+    )
+    
+    report_id = db.add_report(report)
+    report.id = report_id
+    
+    return JSONResponse(
+        content={
+            "message": "Report submitted successfully",
+            "report_id": report_id,
+            "data": report.to_dict()
+        },
+        status_code=201
+    )
+
+@app.get("/api/reports")
+def get_all_reports():
+    """Get all disaster reports"""
+    reports = db.get_all_reports()
+    return {
+        "count": len(reports),
+        "reports": reports
+    }
+
+@app.get("/api/reports/{report_id}")
+def get_report(report_id: int):
+    """Get a specific disaster report"""
+    report = db.get_report_by_id(report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return report
+
+@app.get("/api/alerts")
+def get_alerts():
+    """Get high-priority alerts"""
+    alerts = db.get_alerts()
+    return {
+        "count": len(alerts),
+        "alerts": alerts
+    }
+
+@app.get("/api/uploads/{filename}")
+def get_uploaded_file(filename: str):
+    """Serve uploaded files"""
+    file_path = os.path.join(UPLOAD_DIR, filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(file_path)
+
+@app.get("/api/stats")
+def get_statistics():
+    """Get statistics about disaster reports"""
+    reports = db.get_all_reports()
+    
+    severity_counts = {
+        "Critical": 0,
+        "High": 0,
+        "Medium": 0,
+        "Low": 0
+    }
+    
+    for report in reports:
+        severity = report.get("severity", "Low")
+        if severity in severity_counts:
+            severity_counts[severity] += 1
+    
+    return {
+        "total_reports": len(reports),
+        "severity_breakdown": severity_counts
+    }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+```
+
+### 3. Frontend Setup
+
+**frontend/index.html**
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Disaster Response Agent</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .stats-bar {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+        
+        .stat-card {
+            flex: 1;
+            min-width: 150px;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .stat-number {
+            font-size: 2em;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .stat-label {
+            color: #666;
+            margin-top: 5px;
+        }
+        
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        @media (max-width: 968px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 25px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        h2 {
+            color: #333;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+            font-weight: 500;
+        }
+        
+        input, textarea, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        
+        textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+        
+        button {
+            background: #667eea;
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: background 0.3s;
+        }
+        
+        button:hover {
+            background: #5568d3;
+        }
+        
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .alert {
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            display: none;
+        }
+        
+        .alert.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .alert.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .alert.show {
+            display: block;
+        }
+        
+        .reports-list {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        
+        .report-item {
+            border: 1px solid #eee;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 5px;
+            transition: transform 0.2s;
+        }
+        
+        .report-item:hover {
+            transform: translateX(5px);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .report-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 10px;
+        }
+        
+        .report-title {
+            font-weight: bold;
+            color: #333;
+            font-size: 1.1em;
+        }
+        
+        .severity-badge {
+            padding: 4px 12px;
+            border-radius: 15px;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
+        
+        .severity-Critical {
+            background: #dc3545;
+            color: white;
+        }
+        
+        .severity-High {
+            background: #fd7e14;
+            color: white;
+        }
+        
+        .severity-Medium {
+            background: #ffc107;
+            color: #333;
+        }
+        
+        .severity-Low {
+            background: #28a745;
+            color: white;
+        }
+        
+        .report-meta {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 8px;
+        }
+        
+        .report-description {
+            color: #444;
+            line-height: 1.5;
+        }
+        
+        .report-image {
+            margin-top: 10px;
+            max-width: 100%;
+            border-radius: 5px;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚨 Disaster Response Agent</h1>
+            <p class="subtitle">Real-time disaster reporting and monitoring system</p>
+        </header>
+        
+        <div class="stats-bar">
+            <div class="stat-card">
+                <div class="stat-number" id="totalReports">0</div>
+                <div class="stat-label">Total Reports</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="criticalCount">0</div>
+                <div class="stat-label">Critical</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="highCount">0</div>
+                <div class="stat-label">High Priority</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="mediumCount">0</div>
+                <div class="stat-label">Medium</div>
+            </div>
+        </div>
+        
+        <div class="main-content">
+            <div class="card">
+                <h2>📝 Submit Report</h2>
+                <div id="formAlert" class="alert"></div>
+                
+                <form id="reportForm">
+                    <div class="form-group">
+                        <label for="title">Incident Title *</label>
+                        <input type="text" id="title" required placeholder="e.g., Earthquake in Downtown">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="location">Location *</label>
+                        <input type="text" id="location" required placeholder="e.g., New York, NY">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="severity">Severity Level *</label>
+                        <select id="severity" required>
+                            <option value="">Select severity</option>
+                            <option value="Critical">Critical</option>
+                            <option value="High">High</option>
+                            <option value="Medium">Medium</option>
+                            <option value="Low">Low</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="description">Description *</label>
+                        <textarea id="description" required placeholder="Describe the incident in detail..."></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="reporterName">Your Name *</label>
+                        <input type="text" id="reporterName" required placeholder="John Doe">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="file">Upload Image/Document (Optional)</label>
+                        <input type="file" id="file" accept="image/*,.pdf,.doc,.docx">
+                    </div>
+                    
+                    <button type="submit" id="submitBtn">Submit Report</button>
+                </form>
+            </div>
+            
+            <div class="card">
+                <h2>📋 Recent Reports</h2>
+                <div id="reportsList" class="reports-list">
+                    <div class="loading">Loading reports...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const API_URL = 'http://localhost:8000';
+        
+        // Load statistics
+        async function loadStats() {
+            try {
+                const response = await fetch(`${API_URL}/api/stats`);
+                const data = await response.json();
+                
+                document.getElementById('totalReports').textContent = data.total_reports;
+                document.getElementById('criticalCount').textContent = data.severity_breakdown.Critical;
+                document.getElementById('highCount').textContent = data.severity_breakdown.High;
+                document.getElementById('mediumCount').textContent = data.severity_breakdown.Medium;
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+        
+        // Load reports
+        async function loadReports() {
+            try {
+                const response = await fetch(`${API_URL}/api/reports`);
+                const data = await response.json();
+                
+                const reportsList = document.getElementById('reportsList');
+                
+                if (data.reports.length === 0) {
+                    reportsList.innerHTML = '<div class="empty-state">No reports yet. Submit the first one!</div>';
+                    return;
+                }
+                
+                reportsList.innerHTML = data.reports.map(report => {
+                    const date = new Date(report.created_at).toLocaleString();
+                    const imageHtml = report.file_path 
+                        ? `<img src="${API_URL}/api/${report.file_path}" class="report-image" alt="Report image">`
+                        : '';
+                    
+                    return `
+                        <div class="report-item">
+                            <div class="report-header">
+                                <div class="report-title">${report.title}</div>
+                                <span class="severity-badge severity-${report.severity}">${report.severity}</span>
+                            </div>
+                            <div class="report-meta">
+                                📍 ${report.location} | 👤 ${report.reporter_name} | 🕒 ${date}
+                            </div>
+                            <div class="report-description">${report.description}</div>
+                            ${imageHtml}
+                        </div>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Error loading reports:', error);
+                document.getElementById('reportsList').innerHTML = 
+                    '<div class="empty-state">Error loading reports. Please check if the backend is running.</div>';
+            }
+        }
+        
+        // Show alert
+        function showAlert(message, type) {
+            const alert = document.getElementById('formAlert');
+            alert.textContent = message;
+            alert.className = `alert ${type} show`;
+            
+            setTimeout(() => {
+                alert.classList.remove('show');
+            }, 5000);
+        }
+        
+        // Handle form submission
+        document.getElementById('reportForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const submitBtn = document.getElementById('submitBtn');
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Submitting...';
+            
+            const formData = new FormData();
+            formData.append('title', document.getElementById('title').value);
+            formData.append('location', document.getElementById('location').value);
+            formData.append('severity', document.getElementById('severity').value);
+            formData.append('description', document.getElementById('description').value);
+            formData.append('reporter_name', document.getElementById('reporterName').value);
+            
+            const fileInput = document.getElementById('file');
+            if (fileInput.files[0]) {
+                formData.append('file', fileInput.files[0]);
+            }
+            
+            try {
+                const response = await fetch(`${API_URL}/api/reports`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    showAlert('Report submitted successfully!', 'success');
+                    document.getElementById('reportForm').reset();
+                    loadReports();
+                    loadStats();
+                } else {
+                    showAlert('Error submitting report. Please try again.', 'error');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                showAlert('Connection error. Please check if the backend is running.', 'error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Submit Report';
+            }
+        });
+        
+        // Initial load
+        loadReports();
+        loadStats();
+        
+        // Refresh every 30 seconds
+        setInterval(() => {
+            loadReports();
+            loadStats();
+        }, 30000);
+    </script>
+</body>
+</html>
+```
+
+## Running the Application
+
+### 1. Install Backend Dependencies
+
+```bash
+cd backend
+pip install -r requirements.txt
+```
+
+### 2. Start the Backend Server
+
+```bash
+python app.py
+```
+
+The API will be available at `http://localhost:8000`
+
+### 3. Open the Frontend
+
+Simply open `frontend/index.html` in your web browser, or serve it with a simple HTTP server:
+
+```bash
+# Option 1: Open directly
+cd frontend
+open index.html  # macOS
+start index.html  # Windows
+xdg-open index.html  # Linux
+
+# Option 2: Use Python HTTP server
+python -m http.server 3000
+# Then open http://localhost:3000
+```
+
+## API Endpoints
+
+- `GET /` - API status
+- `POST /api/reports` - Submit a disaster report
+- `GET /api/reports` - Get all reports
+- `GET /api/reports/{id}` - Get specific report
+- `GET /api/alerts` - Get high-priority alerts
+- `GET /api/stats` - Get statistics
+- `GET /api/uploads/{filename}` - Serve uploaded files
+
+## Features
+
+✅ Submit disaster reports with images/files
+✅ Real-time statistics dashboard
+✅ Severity-based alert system
+✅ File upload support
+✅ SQLite database storage
+✅ RESTful API
+✅ Responsive UI
+✅ Console logging for alerts
+✅ Auto-refresh every 30 seconds
+
+## Testing
+
+1. Submit a test report through the form
+2. Check the console for alert notifications
+3. View the report in the reports list
+4. Check statistics update in real-time
+
+## Notes
+
+- All data is stored locally in SQLite
+- Uploaded files are saved in `data/uploads/`
+- The database file is created automatically at `data/disaster_reports.db`
+- Backend logs alerts to console when reports are submitted
+- CORS is enabled for local development
+
+## Future Enhancements
+
+- AWS S3 integration for file storage
+- AWS Bedrock AI agent for automatic triage
+- Real-time notifications via WebSocket
+- Map visualization of incidents
+- SMS/Email alerts
+- Mobile app
